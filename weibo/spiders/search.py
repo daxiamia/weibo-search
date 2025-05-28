@@ -61,34 +61,16 @@ class SearchSpider(scrapy.Spider):
         start_str = start_date.strftime('%Y-%m-%d') + '-0'
         end_str = end_date.strftime('%Y-%m-%d') + '-0'
         for keyword in self.keyword_list:
-            if not self.settings.get('REGION') or '全部' in self.settings.get(
-                    'REGION'):
-                base_url = 'https://s.weibo.com/weibo?q=%s' % keyword
-                url = base_url + self.weibo_type
-                url += self.contain_type
-                url += '&timescope=custom:{}:{}'.format(start_str, end_str)
-                yield scrapy.Request(url=url,
-                                     callback=self.parse,
-                                     meta={
-                                         'base_url': base_url,
-                                         'keyword': keyword
-                                     })
-            else:
-                for region in self.regions.values():
-                    base_url = (
-                        'https://s.weibo.com/weibo?q={}&region=custom:{}:1000'
-                    ).format(keyword, region['code'])
-                    url = base_url + self.weibo_type
-                    url += self.contain_type
-                    url += '&timescope=custom:{}:{}'.format(start_str, end_str)
-                    # 获取一个省的搜索结果
-                    yield scrapy.Request(url=url,
-                                         callback=self.parse,
-                                         meta={
-                                             'base_url': base_url,
-                                             'keyword': keyword,
-                                             'province': region
-                                         })
+            base_url = 'https://s.weibo.com/weibo?q=%s' % keyword
+            url = base_url + self.weibo_type
+            url += self.contain_type
+            url += '&timescope=custom:{}:{}'.format(start_str, end_str)
+            yield scrapy.Request(url=url,
+                                 callback=self.parse,
+                                 meta={
+                                     'base_url': base_url,
+                                     'keyword': keyword
+                                 })
 
     def check_environment(self):
         """判断配置要求的软件是否已安装"""
@@ -112,30 +94,28 @@ class SearchSpider(scrapy.Spider):
     def parse(self, response):
         base_url = response.meta.get('base_url')
         keyword = response.meta.get('keyword')
-        province = response.meta.get('province')
         is_empty = response.xpath(
             '//div[@class="card card-no-result s-pt20b40"]')
         page_count = len(response.xpath('//ul[@class="s-scroll"]/li'))
         if is_empty:
             print('当前页面搜索结果为空')
         elif page_count < self.further_threshold:
-            # 解析当前页面
-            for weibo in self.parse_weibo(response):
+            # 在meta中设置爬取策略，传递给parse_weibo
+            response.meta['crawl_strategy'] = '全时间段'
+            for weibo_data in self.parse_weibo(response):
                 self.check_environment()
-                # 检查是否达到爬取结果数量限制
                 if self.check_limit():
                     return
-                yield weibo
+                yield weibo_data
             next_url = response.xpath(
                 '//a[@class="next"]/@href').extract_first()
             if next_url:
-                # 检查是否达到爬取结果数量限制
                 if self.check_limit():
                     return
                 next_url = self.base_url + next_url
                 yield scrapy.Request(url=next_url,
                                      callback=self.parse_page,
-                                     meta={'keyword': keyword})
+                                     meta={'keyword': keyword, 'crawl_strategy': '全时间段'})
         else:
             start_date = datetime.strptime(self.start_date, '%Y-%m-%d')
             end_date = datetime.strptime(self.end_date, '%Y-%m-%d')
@@ -153,39 +133,36 @@ class SearchSpider(scrapy.Spider):
                                      meta={
                                          'base_url': base_url,
                                          'keyword': keyword,
-                                         'province': province,
-                                         'date': start_str[:-2]
+                                         'date': start_str[:-2],
                                      })
 
     def parse_by_day(self, response):
         """以天为单位筛选"""
         base_url = response.meta.get('base_url')
         keyword = response.meta.get('keyword')
-        province = response.meta.get('province')
+        date = response.meta.get('date')
         is_empty = response.xpath(
             '//div[@class="card card-no-result s-pt20b40"]')
-        date = response.meta.get('date')
         page_count = len(response.xpath('//ul[@class="s-scroll"]/li'))
         if is_empty:
             print('当前页面搜索结果为空')
         elif page_count < self.further_threshold:
-            # 解析当前页面
-            for weibo in self.parse_weibo(response):
+            # 在meta中设置爬取策略，传递给parse_weibo
+            response.meta['crawl_strategy'] = f'按天:{date}'
+            for weibo_data in self.parse_weibo(response):
                 self.check_environment()
-                # 检查是否达到爬取结果数量限制
                 if self.check_limit():
                     return
-                yield weibo
+                yield weibo_data
             next_url = response.xpath(
                 '//a[@class="next"]/@href').extract_first()
             if next_url:
-                # 检查是否达到爬取结果数量限制
                 if self.check_limit():
                     return
                 next_url = self.base_url + next_url
                 yield scrapy.Request(url=next_url,
                                      callback=self.parse_page,
-                                     meta={'keyword': keyword})
+                                     meta={'keyword': keyword, 'crawl_strategy': f'按天:{date}'})
         else:
             start_date_str = date + '-0'
             start_date = datetime.strptime(start_date_str, '%Y-%m-%d-%H')
@@ -201,12 +178,10 @@ class SearchSpider(scrapy.Spider):
                     start_str, end_str)
                 # 获取一小时的搜索结果
                 yield scrapy.Request(url=url,
-                                     callback=self.parse_by_hour_province
-                                     if province else self.parse_by_hour,
+                                     callback=self.parse_by_hour,
                                      meta={
                                          'base_url': base_url,
                                          'keyword': keyword,
-                                         'province': province,
                                          'start_time': start_str,
                                          'end_time': end_str
                                      })
@@ -214,88 +189,150 @@ class SearchSpider(scrapy.Spider):
     def parse_by_hour(self, response):
         """以小时为单位筛选"""
         keyword = response.meta.get('keyword')
-        is_empty = response.xpath(
-            '//div[@class="card card-no-result s-pt20b40"]')
         start_time = response.meta.get('start_time')
         end_time = response.meta.get('end_time')
+        is_empty = response.xpath(
+            '//div[@class="card card-no-result s-pt20b40"]')
         page_count = len(response.xpath('//ul[@class="s-scroll"]/li'))
         if is_empty:
             print('当前页面搜索结果为空')
         elif page_count < self.further_threshold:
-            # 解析当前页面
-            for weibo in self.parse_weibo(response):
+            # 在meta中设置爬取策略，传递给parse_weibo
+            hour_info = start_time.split('-')[-1] if start_time else '未知'
+            response.meta['crawl_strategy'] = f'按小时:{hour_info}'
+            for weibo_data in self.parse_weibo(response):
                 self.check_environment()
-                yield weibo
+                if self.check_limit():
+                    return
+                yield weibo_data
             next_url = response.xpath(
                 '//a[@class="next"]/@href').extract_first()
             if next_url:
+                if self.check_limit():
+                    return
                 next_url = self.base_url + next_url
+                hour_info = start_time.split('-')[-1] if start_time else '未知'
                 yield scrapy.Request(url=next_url,
                                      callback=self.parse_page,
-                                     meta={'keyword': keyword})
+                                     meta={'keyword': keyword, 'crawl_strategy': f'按小时:{hour_info}'})
         else:
-            for region in self.regions.values():
-                url = ('https://s.weibo.com/weibo?q={}&region=custom:{}:1000'
-                       ).format(keyword, region['code'])
+            # 定义账号类型参数
+            account_types = [
+                # {'name': '全部', 'param': 'typeall=1'},
+                {'name': '热门', 'param': 'xsort=hot'},
+                {'name': '原创', 'param': 'scope=ori'},
+                {'name': '认证用户', 'param': 'vip=1'},
+                {'name': '媒体', 'param': 'category=4'},
+                {'name': '观点', 'param': 'viewpoint=1'}
+            ]
+
+            for account_type in account_types:
+                # 构建基础URL
+                url = f'https://s.weibo.com/weibo?q={keyword}'
+
+                # 添加账号类型参数
+                url += f'&{account_type["param"]}'
+
+                # 添加原有的微博类型和内容类型筛选
                 url += self.weibo_type
                 url += self.contain_type
-                url += '&timescope=custom:{}:{}&page=1'.format(
-                    start_time, end_time)
-                # 获取一小时一个省的搜索结果
+
+                # 添加时间范围
+                url += f'&timescope=custom:{start_time}:{end_time}&page=1'
+
+                print(f'正在爬取账号类型: {account_type["name"]}')
+
+                # 获取一小时一个账号类型的搜索结果
                 yield scrapy.Request(url=url,
-                                     callback=self.parse_by_hour_province,
+                                     callback=self.parse_by_hour_account_type,
                                      meta={
                                          'keyword': keyword,
                                          'start_time': start_time,
                                          'end_time': end_time,
-                                         'province': region
+                                         'account_type': account_type
                                      })
 
-    def parse_by_hour_province(self, response):
-        """以小时和直辖市/省为单位筛选"""
+    def parse_by_hour_account_type(self, response):
+        """以小时和账号类型为单位筛选"""
         keyword = response.meta.get('keyword')
-        is_empty = response.xpath(
-            '//div[@class="card card-no-result s-pt20b40"]')
         start_time = response.meta.get('start_time')
         end_time = response.meta.get('end_time')
-        province = response.meta.get('province')
+        account_type = response.meta.get('account_type')
+        is_empty = response.xpath(
+            '//div[@class="card card-no-result s-pt20b40"]')
         page_count = len(response.xpath('//ul[@class="s-scroll"]/li'))
+
         if is_empty:
             print('当前页面搜索结果为空')
         elif page_count < self.further_threshold:
-            # 解析当前页面
-            for weibo in self.parse_weibo(response):
+            # 在meta中设置爬取策略，传递给parse_weibo
+            hour_info = start_time.split('-')[-1] if start_time else '未知'
+            response.meta['crawl_strategy'] = f'按小时:{hour_info}+账号类型:{account_type["name"]}'
+            for weibo_data in self.parse_weibo(response):
                 self.check_environment()
-                yield weibo
+                if self.check_limit():
+                    return
+                yield weibo_data
             next_url = response.xpath(
                 '//a[@class="next"]/@href').extract_first()
             if next_url:
+                if self.check_limit():
+                    return
                 next_url = self.base_url + next_url
+                hour_info = start_time.split('-')[-1] if start_time else '未知'
                 yield scrapy.Request(url=next_url,
                                      callback=self.parse_page,
-                                     meta={'keyword': keyword})
+                                     meta={'keyword': keyword,
+                                           'crawl_strategy': f'按小时:{hour_info}+账号类型:{account_type["name"]}'})
         else:
-            for city in province['city'].values():
-                url = ('https://s.weibo.com/weibo?q={}&region=custom:{}:{}'
-                       ).format(keyword, province['code'], city)
+            # 定义消息类型参数进行进一步细分
+            content_types = [
+                # {'name': '全部', 'param': 'suball=1'},
+                {'name': '图片', 'param': 'haspic=1'},
+                {'name': '视频', 'param': 'hasvideo=1'},
+                {'name': '音乐', 'param': 'hasmusic=1'},
+                {'name': '短链', 'param': 'haslink=1'}
+            ]
+
+            for content_type in content_types:
+                # 构建基础URL
+                url = f'https://s.weibo.com/weibo?q={keyword}'
+
+                # 添加账号类型参数
+                url += f'&{account_type["param"]}'
+
+                # 添加消息类型参数
+                url += f'&{content_type["param"]}'
+
+                # 添加原有的微博类型和内容类型筛选
                 url += self.weibo_type
                 url += self.contain_type
-                url += '&timescope=custom:{}:{}&page=1'.format(
-                    start_time, end_time)
-                # 获取一小时一个城市的搜索结果
+
+                # 添加时间范围
+                url += f'&timescope=custom:{start_time}:{end_time}&page=1'
+
+                # 构建爬取策略描述
+                hour_info = start_time.split('-')[-1] if start_time else '未知'
+                crawl_strategy = f'按小时:{hour_info}+账号类型:{account_type["name"]}+消息类型:{content_type["name"]}'
+
+                print(f'正在爬取组合: {account_type["name"]} + {content_type["name"]}')
+
+                # 获取一小时一个账号类型和消息类型组合的搜索结果
                 yield scrapy.Request(url=url,
                                      callback=self.parse_page,
                                      meta={
                                          'keyword': keyword,
                                          'start_time': start_time,
                                          'end_time': end_time,
-                                         'province': province,
-                                         'city': city
+                                         'account_type': account_type['name'],
+                                         'content_type': content_type['name'],
+                                         'crawl_strategy': crawl_strategy
                                      })
 
     def parse_page(self, response):
         """解析一页搜索结果的信息"""
         keyword = response.meta.get('keyword')
+        crawl_strategy = response.meta.get('crawl_strategy', '未知策略')
         is_empty = response.xpath(
             '//div[@class="card card-no-result s-pt20b40"]')
         if is_empty:
@@ -306,6 +343,8 @@ class SearchSpider(scrapy.Spider):
                 # 检查是否达到爬取结果数量限制
                 if self.check_limit():
                     return
+                # 设置爬取策略
+                weibo['crawl_strategy'] = crawl_strategy
                 yield weibo
             next_url = response.xpath(
                 '//a[@class="next"]/@href').extract_first()
@@ -316,7 +355,7 @@ class SearchSpider(scrapy.Spider):
                 next_url = self.base_url + next_url
                 yield scrapy.Request(url=next_url,
                                      callback=self.parse_page,
-                                     meta={'keyword': keyword})
+                                     meta={'keyword': keyword, 'crawl_strategy': crawl_strategy})
 
     def get_ip(self, bid):
         url = f"https://weibo.com/ajax/statuses/show?id={bid}&locale=zh-CN"
@@ -419,6 +458,8 @@ class SearchSpider(scrapy.Spider):
     def parse_weibo(self, response):
         """解析网页中的微博信息"""
         keyword = response.meta.get('keyword')
+        crawl_strategy = response.meta.get('crawl_strategy', '未知策略')
+
         for sel in response.xpath("//div[@class='card-wrap']"):
             # 检查是否达到爬取结果数量限制
             if self.check_limit():
@@ -537,6 +578,8 @@ class SearchSpider(scrapy.Spider):
                     weibo['pics'] = ''
                     weibo['video_url'] = ''
                 weibo['retweet_id'] = ''
+
+                # 处理转发微博
                 if retweet_sel and retweet_sel[0].xpath(
                         './/div[@node-type="feed_list_forwardContent"]/a[1]'):
                     retweet = WeiboItem()
@@ -598,10 +641,16 @@ class SearchSpider(scrapy.Spider):
                     retweet['pics'] = pics
                     retweet['video_url'] = video_url
                     retweet['retweet_id'] = ''
+                    retweet["ip"] = ''
+                    retweet["keyword"] = keyword
+
+                    # 为转发微博设置爬取策略
+                    retweet['crawl_strategy'] = crawl_strategy
 
                     # 增加结果计数（转发微博也计入总数）
                     self.result_count += 1
 
+                    # 【关键修复】返回正确的字典格式
                     yield {'weibo': retweet, 'keyword': keyword}
 
                     # 检查是否达到爬取结果数量限制
@@ -609,14 +658,15 @@ class SearchSpider(scrapy.Spider):
                         return
 
                     weibo['retweet_id'] = retweet['id']
-                weibo["ip"] = self.get_ip(bid)
+
+                weibo["ip"] = ''
+                weibo["keyword"] = keyword
 
                 avator = sel.xpath(
                     "div[@class='card']/div[@class='card-feed']/div[@class='avator']"
                 )
                 if avator:
                     user_auth = avator.xpath('.//svg/@id').extract_first()
-                    print(user_auth)
                     if user_auth == 'woo_svg_vblue':
                         weibo['user_authentication'] = '蓝V'
                     elif user_auth == 'woo_svg_vyellow':
@@ -627,11 +677,14 @@ class SearchSpider(scrapy.Spider):
                         weibo['user_authentication'] = '金V'
                     else:
                         weibo['user_authentication'] = '普通用户'
-                print(weibo)
+
+                # 为主微博设置爬取策略
+                weibo['crawl_strategy'] = crawl_strategy
 
                 # 增加结果计数（主微博）
                 self.result_count += 1
 
+                # 【关键修复】返回正确的字典格式
                 yield {'weibo': weibo, 'keyword': keyword}
 
                 # 检查是否达到爬取结果数量限制

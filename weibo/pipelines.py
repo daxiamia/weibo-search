@@ -36,7 +36,7 @@ class CsvPipeline(object):
                     header = [
                         'id', 'bid', 'user_id', '用户昵称', '微博正文', '头条文章url',
                         '发布位置', '艾特用户', '话题', '转发数', '评论数', '点赞数', '发布时间',
-                        '发布工具', '微博图片url', '微博视频url', 'retweet_id', 'ip', 'user_authentication',
+                        '发布工具', '微博图片url', '微博视频url', 'retweet_id', 'ip', '关键字', 'user_authentication',
                         '会员类型', '会员等级'
                     ]
                     writer.writerow(header)
@@ -60,6 +60,7 @@ class CsvPipeline(object):
                     item['weibo'].get('video_url', ''),
                     item['weibo'].get('retweet_id', ''),
                     item['weibo'].get('ip', ''),
+                    item['keyword'].get('keyword', ''),
                     item['weibo'].get('user_authentication', ''),
                     item['weibo'].get('vip_type', ''),
                     item['weibo'].get('vip_level', 0)
@@ -98,6 +99,7 @@ class SQLitePipeline(object):
                 reposts_count INTEGER,
                 retweet_id varchar(20),
                 ip varchar(100),
+                keyword varchar(100),
                 user_authentication varchar(100),
                 vip_type varchar(50),
                 vip_level INTEGER
@@ -238,6 +240,7 @@ class MysqlPipeline(object):
                 retweet_id varchar(20),
                 PRIMARY KEY (id),
                 ip varchar(100),
+                keyword varchar(100),
                 user_authentication varchar(100),
                 vip_type varchar(50),
                 vip_level INT

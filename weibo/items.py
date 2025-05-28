@@ -31,3 +31,5 @@ class WeiboItem(scrapy.Item):
     user_authentication = scrapy.Field()
     vip_type = scrapy.Field()
     vip_level = scrapy.Field()
+    keyword = scrapy.Field()
+    crawl_strategy = scrapy.Field()
